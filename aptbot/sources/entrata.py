@@ -1,9 +1,15 @@
 """Entrata ProspectPortal property sites (e.g. Hanover Soma West).
 
-The /conventional/ floor-plans page embeds every available unit as a JavaScript string:
-    var unitsData = '{"<floorplan_id>":[{"unit_number":"161","bedroom":0,...,"available_on":"10\\/22\\/2026",...}]}';
-Fields used: marketing_unit_number/unit_number, bedroom, bathroom, sqft, floor_number, available_on,
-min_rent/max_rent (or advertised base rent), is_call_for_pricing, floorplan_name.
+Entrata embeds its availability in the page as JSON. Two shapes have been seen in the wild:
+
+* current: `"floorplanUnits":{"propertyUnits":[{...}]}` with `unitNumber`, `bedroom`, `bathroom`,
+  `sqft`, `availableOn`, `minAdvertisedBaseRent`, `floorplanName`, `floor_number`.
+* older: an HTML-escaped JSON blob in a `data-units="..."` attribute using snake_case keys
+  (`available_on`, `unit_number`, `min_advertised_base_rent`).
+
+Both are handled. Applications are started from the site's
+`/Apartments/module/application_authentication/...` link, which is property-wide rather than
+per-unit, so every unit shares it.
 """
 from __future__ import annotations
 
@@ -14,49 +20,71 @@ import re
 from typing import Any, Optional
 
 from ..models import Unit
-from .util import fmt_date, parse_baths, parse_beds, parse_int
+from .util import extract_json_after, fmt_date, parse_baths, parse_beds, parse_int, parse_money
 
 log = logging.getLogger("aptbot.entrata")
-_UNITS = re.compile(r"var\s+unitsData\s*=\s*'(.*?)';", re.S)
-_APPLY = re.compile(r'https://[a-z0-9.-]+/[^"\'<> ]*application_authentication[^"\'<> ]*', re.I)
+
+_APPLY = re.compile(r"https?://[^\"'<> ]*?/Apartments/module/application_authentication/[^\"'<> ]*", re.I)
+_DATA_UNITS = re.compile(r'data-units="([^"]+)"')
 
 
-def _money(v: Any) -> Optional[float]:
-    try:
-        f = float(str(v).replace(",", ""))
-        return f if f > 0 else None
-    except (TypeError, ValueError):
-        return None
+def _first(d: dict[str, Any], *keys: str) -> Any:
+    for k in keys:
+        if d.get(k) not in (None, "", []):
+            return d[k]
+    return None
+
+
+def _row(u: dict[str, Any]) -> dict[str, Any]:
+    price = parse_money(_first(u, "minAdvertisedBaseRent", "min_advertised_base_rent", "minRent", "min_rent"))
+    pmax = parse_money(_first(u, "maxAdvertisedBaseRent", "max_advertised_base_rent", "maxRent", "max_rent"))
+    floor = _first(u, "floor_number", "floorNumber", "floor")
+    amen = u.get("amenities") or []
+    return {
+        "unit_number": str(_first(u, "marketingUnitNumber", "marketing_unit_number", "unitNumber", "unit_number") or ""),
+        "bedrooms": parse_beds(_first(u, "bedroom", "bedrooms", "bed")),
+        "bathrooms": parse_baths(_first(u, "bathroom", "bathrooms", "bath")),
+        "sqft": parse_int(u.get("sqft")),
+        "floor": str(floor) if floor not in (None, "") else None,
+        "price": price, "price_max": pmax if pmax and price and pmax > price else None,
+        "available": fmt_date(_first(u, "availableOn", "available_on", "availableDate")),
+        "floorplan": _first(u, "floorplanName", "floorplan_name"),
+        "id": str(_first(u, "unitId", "unit_id", "id") or ""),
+        "amenities": [a.get("name") for a in amen if isinstance(a, dict) and a.get("name")][:6],
+    }
 
 
 def parse_entrata(html: str) -> dict[str, Any]:
-    m = _UNITS.search(html)
-    if not m:
-        raise ValueError("unitsData not found on Entrata page")
-    raw = m.group(1)
-    try:
-        data = json.loads(raw.encode().decode("unicode_escape"))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        data = json.loads(raw.replace('\\"', '"').replace("\\\\/", "/").replace("\\/", "/"))
-    rows = []
-    for fp_id, units in (data.items() if isinstance(data, dict) else []):
-        for u in units or []:
-            call = bool(u.get("is_call_for_pricing"))
-            lo = None if call else (_money(u.get("min_advertised_base_rent")) or _money(u.get("min_rent_unit")) or _money(u.get("min_rent")))
-            hi = None if call else (_money(u.get("max_rent_unit")) or _money(u.get("max_rent")) or lo)
-            rows.append({
-                "unit_number": str(u.get("marketing_unit_number") or u.get("unit_number") or ""),
-                "bedrooms": parse_beds(u.get("bedroom_unit", u.get("bedroom"))),
-                "bathrooms": parse_baths(u.get("bathroom_unit", u.get("bathroom"))),
-                "sqft": parse_int(u.get("sqft_unit") or u.get("sqft")),
-                "floor": str(u["floor_number"]) if u.get("floor_number") not in (None, "") else None,
-                "price": lo, "price_max": hi if hi and lo and hi >= lo else lo,
-                "available": fmt_date(str(u.get("available_on") or "").replace("\\/", "/")),
-                "floorplan": u.get("floorplan_name"), "id": str(u.get("unit_space_id") or u.get("id") or ""),
-                "floorplan_id": str(fp_id),
-            })
-    apply = _APPLY.search(html)
-    return {"units": rows, "apply_url": htmlmod.unescape(apply.group(0)) if apply else None}
+    units: list[dict[str, Any]] = []
+    if '"propertyUnits"' in html:
+        try:
+            units = extract_json_after(html, '"propertyUnits":', "[", "]") or []
+        except ValueError:
+            units = []
+    if not units:  # older template
+        for m in _DATA_UNITS.finditer(html):
+            try:
+                blob = json.loads(htmlmod.unescape(m.group(1)))
+            except json.JSONDecodeError:
+                continue
+            if isinstance(blob, dict):
+                blob = blob.get("units") or blob.get("propertyUnits") or []
+            if isinstance(blob, list):
+                units.extend(x for x in blob if isinstance(x, dict))
+    if not units:
+        raise ValueError("no Entrata unit JSON found (looked for propertyUnits and data-units)")
+    rows, seen = [], set()
+    for u in units:
+        if not isinstance(u, dict):
+            continue
+        r = _row(u)
+        key = r["id"] or r["unit_number"]
+        if not r["unit_number"] or key in seen:
+            continue
+        seen.add(key)
+        rows.append(r)
+    apply_m = _APPLY.search(html)
+    return {"units": rows, "apply_url": apply_m.group(0) if apply_m else None}
 
 
 async def fetch(http: Any, b: Any, cfg: Optional[dict[str, Any]] = None) -> list[Unit]:
@@ -65,13 +93,12 @@ async def fetch(http: Any, b: Any, cfg: Optional[dict[str, Any]] = None) -> list
     d = parse_entrata(html)
     out = []
     for r in d["units"]:
-        if not r["unit_number"]:
-            continue
         out.append(Unit(
             building_id=b.id, building_name=b.name, unit_number=r["unit_number"], bedrooms=r["bedrooms"],
             bathrooms=r["bathrooms"], sqft=r["sqft"], floor=r["floor"], price=r["price"], price_max=r["price_max"],
             available=r["available"], listing_url=b.listing_url or cfg["url"],
-            apply_url=cfg.get("apply_url") or d["apply_url"] or b.apply_url or cfg["url"], floorplan=r["floorplan"],
-            source="entrata", source_id=r["id"],
+            apply_url=cfg.get("apply_url") or b.apply_url or d["apply_url"] or cfg["url"],
+            floorplan=r["floorplan"], source="entrata", source_id=r["id"],
+            extra={"amenities": r["amenities"]} if r["amenities"] else {},
         ))
     return out

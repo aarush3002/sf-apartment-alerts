@@ -5,12 +5,15 @@ import asyncio
 import json
 import logging
 import logging.handlers
+import os
+import re
 import signal
 import sys
 from pathlib import Path
 from typing import Any, Optional
 
 from . import __version__
+from . import configedit as ce
 from .config import Config, load_config
 from .engine import Engine
 from .filters import matches
@@ -169,6 +172,172 @@ async def cmd_resolve(args: argparse.Namespace, cfg: Config) -> int:
     return 0
 
 
+
+
+# ---------------------------------------------------------------- config editing
+
+def _config_path(args: argparse.Namespace) -> Path:
+    import os
+    return Path(args.config or os.environ.get("APTBOT_CONFIG") or (Path(__file__).resolve().parent.parent / "config.yaml"))
+
+
+def _maybe_restart(args: argparse.Namespace) -> None:
+    label = "com.aptbot.sf"
+    if getattr(args, "restart", False):
+        import subprocess
+        subprocess.run(["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{label}"], check=False)
+        print("  restarted the running bot")
+    else:
+        print(f"  restart to apply: launchctl kickstart -k gui/$(id -u)/{label}")
+
+
+def cmd_filters(args: argparse.Namespace, cfg: Config) -> int:
+    path = _config_path(args)
+    changes: list[tuple[str, Any]] = []
+    if args.bedrooms is not None:
+        try:
+            beds = sorted({int(x) for x in re.split(r"[,\s]+", args.bedrooms.strip()) if x != ""})
+        except ValueError:
+            print(f"could not read bedrooms from {args.bedrooms!r}; use something like 0,1,2")
+            return 2
+        changes.append(("bedrooms", beds))
+    for key, val in (("max_price", args.max_price), ("min_price", args.min_price),
+                     ("min_sqft", args.min_sqft), ("available_by", args.available_by)):
+        if val is not None:
+            changes.append((key, None if str(val).lower() in ("none", "clear", "") else val))
+    if args.clear:
+        for key in args.clear:
+            changes.append((key, None))
+    if not changes:
+        f = cfg.filters
+        print("current filters:")
+        print(f"  bedrooms:      {f.bedrooms}   (0 = studio)")
+        for k in ("min_price", "max_price", "min_sqft", "available_by"):
+            print(f"  {k+':':<15}{getattr(f, k) if getattr(f, k) is not None else '(any)'}")
+        print(f"  include_unknown_bedrooms: {f.include_unknown_bedrooms}")
+        print("\nexamples:")
+        print("  aptbot filters --bedrooms 0,1,2 --max-price 6000")
+        print("  aptbot filters --clear max_price")
+        return 0
+    def apply(text: str) -> str:
+        for key, val in changes:
+            text = ce.set_filter(text, key, val)
+        return text
+    try:
+        d = ce.edit(path, apply)
+    except ce.ConfigEditError as e:
+        print(f"no change: {e}")
+        return 1
+    print("filters now:", d.get("filters"))
+    _maybe_restart(args)
+    return 0
+
+
+def cmd_recipients(args: argparse.Namespace, cfg: Config) -> int:
+    from .notify.imessage import normalize_number
+    path = _config_path(args)
+    current = ce.get_recipients(path.read_text())
+    if args.action in (None, "list"):
+        print("texting:" if current else "no recipients configured")
+        for r in current:
+            print("  ", r)
+        print("\n  aptbot recipients add +14155551234 | remove +14155551234")
+        return 0
+    wanted = [normalize_number(n) for n in (args.numbers or [])]
+    if not wanted:
+        print("give at least one phone number")
+        return 2
+    if args.action == "add":
+        new = current + [n for n in wanted if n not in current]
+    elif args.action == "remove":
+        new = [n for n in current if n not in wanted]
+    else:  # set
+        new = wanted
+    if new == current:
+        print("already the case; nothing to do")
+        return 0
+    try:
+        ce.edit(path, lambda t: ce.set_recipients(t, new))
+    except ce.ConfigEditError as e:
+        print(f"no change: {e}")
+        return 1
+    print("texting:", ", ".join(new))
+    _maybe_restart(args)
+    return 0
+
+
+def cmd_toggle(args: argparse.Namespace, cfg: Config) -> int:
+    path = _config_path(args)
+    want = args.cmd == "enable"
+    try:
+        ce.edit(path, lambda t: ce.set_enabled(t, args.building, want))
+    except ce.ConfigEditError as e:
+        print(f"no change: {e}")
+        return 1
+    print(f"{args.building} is now {'enabled' if want else 'disabled'}")
+    _maybe_restart(args)
+    return 0
+
+
+async def cmd_add_building(args: argparse.Namespace, cfg: Config) -> int:
+    from .discover import discover, render_block, slug_id
+    path = _config_path(args)
+    print(f"inspecting {args.url} ...")
+    async with Http() as http:
+        try:
+            res = await discover(http, args.url)
+        except Exception as e:  # noqa: BLE001
+            print(f"could not read that page: {type(e).__name__}: {e}")
+            return 1
+    name = args.name or res["name"]
+    print(f"\nlooks like: {name}")
+    if res["address"]:
+        print(f"address:    {res['address']}")
+    if not res["candidates"]:
+        print("\nNo known leasing platform found on that page.")
+        print("Open the page source and look for one of: securecafe onlineleasing links, a")
+        print("sightmap.com/embed hash, jd-fp-data-script-app, ysi.unitsList, ea5.unitAvailability,")
+        print("window.udr.jsonObjPropertyViewModel, or an Entrata propertyUnits blob.")
+        return 1
+    print("\nplatforms detected:")
+    for c in res["candidates"]:
+        status = f"{c.units} units" if c.works else (c.error or "no units")
+        print(f"  {'OK ' if c.works else '   '} {c.type:<14} {status:<44} ({c.why})")
+        for line in c.sample:
+            print(f"        {line}")
+    working = res["working"]
+    if not working:
+        print("\nNone of them returned units. The building may simply be full right now, or the")
+        print("site changed. Re-run later, or pass --force to add it with the best guess anyway.")
+        if not args.force:
+            return 1
+        working = res["candidates"][:1]
+    primary = working[0]
+    fallback = working[1] if len(working) > 1 else None
+    enrich = next((c for c in res["candidates"]
+                   if c.type == "securecafe" and c is not primary and c.params.get("property_id")), None)
+    bid = args.id or slug_id(name)
+    block = render_block(bid, name, primary, address=args.address or res["address"] or "",
+                         stories=args.stories, listing_url=args.url,
+                         fallback=fallback, enrich=enrich if primary.type != "securecafe" else None)
+    print("\nconfig entry:")
+    print(block.rstrip())
+    if args.stories is None:
+        print("  note: no `stories`, so alerts will say \"height unknown\". Add --stories N to label it.")
+    if args.dry_run:
+        print("\n(dry run, nothing written)")
+        return 0
+    try:
+        ce.edit(path, lambda t: ce.append_building(t, bid, block), expect_buildings=len(cfg.buildings) + 1)
+    except ce.ConfigEditError as e:
+        print(f"\nnot added: {e}")
+        return 1
+    print(f"\nadded {bid} to {path.name}")
+    print(f"  check it with: aptbot once -b {bid} --all-units")
+    _maybe_restart(args)
+    return 0
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(prog="aptbot", description="SF high-rise apartment availability monitor")
     ap.add_argument("-c", "--config", help="path to config.yaml")
@@ -190,12 +359,43 @@ def main(argv: Optional[list[str]] = None) -> int:
     p = sub.add_parser("reset", help="forget seen units (next run re-baselines)")
     p.add_argument("-b", "--building")
     sub.add_parser("resolve", help="resolve securecafe property ids / sightmap api urls")
+
+    p = sub.add_parser("filters", help="show or change the search criteria")
+    p.add_argument("--bedrooms", help="comma separated, e.g. 0,1,2 (0 = studio)")
+    p.add_argument("--max-price", type=float, dest="max_price")
+    p.add_argument("--min-price", type=float, dest="min_price")
+    p.add_argument("--min-sqft", type=int, dest="min_sqft")
+    p.add_argument("--available-by", dest="available_by", help="ISO date, only alert if available on or before")
+    p.add_argument("--clear", action="append", help="remove a filter, e.g. --clear max_price")
+    p.add_argument("--restart", action="store_true", help="restart the running bot afterwards")
+
+    p = sub.add_parser("recipients", help="who gets texted")
+    p.add_argument("action", nargs="?", choices=["list", "add", "remove", "set"], default="list")
+    p.add_argument("numbers", nargs="*")
+    p.add_argument("--restart", action="store_true")
+
+    p = sub.add_parser("add-building", help="detect a building's leasing platform from its URL and add it")
+    p.add_argument("url")
+    p.add_argument("--id", help="config key; defaults to a slug of the name")
+    p.add_argument("--name")
+    p.add_argument("--address", default="")
+    p.add_argument("--stories", type=int, help="floor count, used for the high/mid/low-rise label")
+    p.add_argument("--dry-run", action="store_true", help="show what would be added, write nothing")
+    p.add_argument("--force", action="store_true", help="add even if no units came back")
+    p.add_argument("--restart", action="store_true")
+
+    for name in ("enable", "disable"):
+        p = sub.add_parser(name, help=f"{name} a building")
+        p.add_argument("building")
+        p.add_argument("--restart", action="store_true")
     args = ap.parse_args(argv)
     cfg = load_config(args.config)
     setup_logging(cfg, args.verbose)
     handler: Any = {
         "run": cmd_run, "once": cmd_once, "test-notify": cmd_test_notify, "status": cmd_status,
         "list": cmd_list, "reset": cmd_reset, "resolve": cmd_resolve,
+        "filters": cmd_filters, "recipients": cmd_recipients, "add-building": cmd_add_building,
+        "enable": cmd_toggle, "disable": cmd_toggle,
     }[args.cmd]
     if asyncio.iscoroutinefunction(handler):
         return asyncio.run(handler(args, cfg))

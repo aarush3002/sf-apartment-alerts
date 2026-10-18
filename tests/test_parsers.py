@@ -1,3 +1,5 @@
+import pytest
+
 import json
 
 from aptbot.sources import avalon, equity, greystar, jdfp, nema, related, securecafe, sightmap, udr
@@ -143,19 +145,34 @@ def test_elise(fixture):
         "https://eqr-applications.com/building/340-fremont-2/units?unit_id=u1903084172&move_in_date=2026-10-07&lease_term=12")
 
 
-def test_entrata(fixture):
-    from aptbot.sources import entrata
-    d = entrata.parse_entrata(fixture("entrata_hanover.html"))
-    assert len(d["units"]) == 33
-    u = d["units"][0]
-    assert u["unit_number"] == "161" and u["bedrooms"] == 0 and u["sqft"] == 437 and u["floor"] == "1"
-    assert u["available"] == "2026-10-22" and u["price"] == 3536.0 and u["floorplan"] == "S4"
-    assert all(x["available"] and "/" not in x["available"] for x in d["units"])
-
-
 def test_avalon_empty_and_broken():
     import pytest
     from aptbot.sources import avalon
     assert avalon.parse_avalon('{"communityId":"AVB-CA104","units":[]}') == []
     with pytest.raises(ValueError):
         avalon.parse_avalon("<html>maintenance page</html>")
+
+
+def test_entrata_current_and_legacy_formats(fixture):
+    import collections
+
+    from aptbot.sources import entrata
+    d = entrata.parse_entrata(fixture("entrata_hanover.html"))
+    assert len(d["units"]) == 27
+    assert dict(collections.Counter(r["bedrooms"] for r in d["units"])) == {0: 8, 1: 7, 2: 10, 3: 2}
+    u = [r for r in d["units"] if r["unit_number"] == "161"][0]
+    assert u["bedrooms"] == 0 and u["bathrooms"] == 1.0 and u["floor"] == "1"
+    assert u["price"] == 3360.0 and u["available"] == "2026-10-22" and u["floorplan"] == "S4"
+    assert "/Apartments/module/application_authentication/" in d["apply_url"]
+
+    legacy = ('<div data-units="{&quot;units&quot;:[{&quot;unit_number&quot;:&quot;12A&quot;,'
+              '&quot;bedrooms&quot;:2,&quot;bathrooms&quot;:2,&quot;sqft&quot;:900,'
+              '&quot;available_on&quot;:&quot;11/05/2026&quot;,'
+              '&quot;min_advertised_base_rent&quot;:5000}]}"></div>')
+    rows = entrata.parse_entrata(legacy)["units"]
+    assert rows == [{"unit_number": "12A", "bedrooms": 2, "bathrooms": 2.0, "sqft": 900, "floor": None,
+                     "price": 5000.0, "price_max": None, "available": "2026-11-05", "floorplan": None,
+                     "id": "", "amenities": []}]
+
+    with pytest.raises(ValueError):
+        entrata.parse_entrata("<html>no units anywhere</html>")

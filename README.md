@@ -55,15 +55,50 @@ Requires Python 3.11 or newer.
 On Linux or Windows, switch `notify.channels` to `ntfy` or `twilio`. The iMessage channel drives
 Messages.app through AppleScript and will fail elsewhere.
 
-## Configuring what you get
+## Changing what it watches
 
-`filters:` in `config.yaml` takes `bedrooms` (0 means studio), `min_price`, `max_price`,
-`min_sqft` and `available_by`. Any of them can be overridden per building. Toggle a building with
-`enabled: false`. After editing, restart:
+Everything is editable from the command line. Each command rewrites `config.yaml` in place,
+keeping your comments, and refuses the edit if the result would not parse. Add `--restart` to
+apply it to the running bot immediately.
 
 ```bash
-launchctl kickstart -k gui/$(id -u)/com.aptbot.sf
+aptbot filters                                   # show current criteria
+aptbot filters --bedrooms 0,1,2 --max-price 6000 # studios through 2BR, under $6k
+aptbot filters --min-sqft 700 --available-by 2026-12-31
+aptbot filters --clear max_price                 # drop a criterion
+
+aptbot recipients                                # who gets texted
+aptbot recipients add +14155551234
+aptbot recipients remove +14155551234
+
+aptbot enable jasper                             # start or stop watching one building
+aptbot disable jasper --restart
 ```
+
+You can also edit `config.yaml` by hand. `filters:` takes `bedrooms` (0 means studio),
+`min_price`, `max_price`, `min_sqft` and `available_by`, and any of them can be overridden per
+building.
+
+## Adding a building
+
+Point it at the building's website and it works out the rest:
+
+```bash
+aptbot add-building https://example-apartments.com/floorplans --stories 12 --dry-run
+```
+
+It fingerprints the page for every leasing platform it knows, then **actually runs each one** and
+keeps whichever return units, so what it suggests is something it has verified rather than a guess.
+The best feed becomes the primary source, the runner-up becomes the fallback, and a securecafe
+link found alongside becomes the per-unit application lookup. Drop `--dry-run` to write it, then:
+
+```bash
+aptbot once -b <building_id> --all-units
+```
+
+If no platform is found, or none returns units, it tells you instead of adding something broken.
+That usually means the building is full right now, or its site has no machine-readable
+availability at all. `--force` adds it anyway.
 
 Every alert names the building class, derived from the `stories` field: high-rise at 12 floors or
 more, mid-rise at 5 to 11, low-rise below that.
