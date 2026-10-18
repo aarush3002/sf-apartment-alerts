@@ -1,0 +1,4 @@
+#!/bin/bash
+# Convenience wrapper: ./scripts/aptbot status | once | list | test-notify | reset | run
+PROJECT="$(cd "$(dirname "$0")/.." && pwd)"
+exec "$PROJECT/.venv/bin/python" -m aptbot "$@"

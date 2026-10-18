@@ -1,0 +1,9 @@
+.venv/
+data/
+logs/
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+config.yaml
+RECREATE_PROMPT.md

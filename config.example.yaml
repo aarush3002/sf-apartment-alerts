@@ -1,0 +1,531 @@
+# SF high-rise apartment monitor configuration.
+# Every building points at the property's OWN availability feed (never Zillow/Redfin/etc).
+#
+# Source types:
+#   securecafe  Yardi RentCafe online-leasing page (live Voyager availability + per-unit apply link)
+#   sightmap    Engrain SightMap JSON behind the interactive floor-plan map on the property site
+#   jdfp        RentCafe-built property site floor-plan app JSON (unit list w/ pricing + unit pages)
+#   greystar    greystar.com property page (Next.js payload)
+#   equity      equityapartments.com property page (embedded unit JSON + Elise apply links)
+#   related     relatedrentals.com property page (unit cards)
+#   avalon      avaloncommunities.com community page (embedded unit JSON)
+#   udr         udr.com apartments-pricing page (embedded view-model JSON + RealPage apply links)
+#   nema        rentnema.com/availabilities (NEMA's own page incl. per-unit apply links)
+#   rentcafe_site  RentCafe-hosted marketing site /floorplans page(s) + floor-plan detail pages (unit rows)
+#   elise       EliseAI application portal (eqr-applications.com): live units Equity accepts applications for
+#   entrata     Entrata ProspectPortal floor-plans page (embedded `var unitsData` JSON)
+#
+# `fallback` is tried when the primary source errors. `apply_enrich` looks a NEW unit up on the
+# building's securecafe page to attach the unit-specific application link.
+
+filters:
+  bedrooms: [0, 1, 2]   # 0 = studio
+  # max_price: 9000        # monthly rent cap (uncomment to use)
+  # min_sqft: 900
+  # available_by: 2026-12-31
+  include_unknown_bedrooms: false
+
+notify:
+  to: ["+1XXXXXXXXXX"]        # your phone number(s); one text per recipient
+  channels:
+    - imessage            # sends from this Mac's Messages.app (iMessage, or SMS relay via your iPhone)
+    # - type: twilio      # needs TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_FROM in .env
+    # - type: ntfy        # push notification; set NTFY_TOPIC in .env and subscribe in the ntfy app
+    #   topic: your-secret-topic
+    # - console
+
+poll:
+  interval: 120             # seconds between polls of an unprotected source
+  securecafe_interval: 180  # securecafe.com sits behind Cloudflare; poll it more gently
+  jitter: 0.15
+  concurrency: 6
+  per_host: 2
+  relist_days: 21           # a unit that vanished and comes back after this many days counts as new again
+
+buildings:
+  # ------------------------------------------------------------ SoMa / Mid-Market / Civic Center
+  nema:
+    name: NEMA
+    address: 8 10th St
+    stories: 37
+    listing_url: https://www.rentnema.com/availabilities
+    source: {type: nema, url: https://www.rentnema.com/availabilities}
+    fallback: {type: securecafe, host: rentnema.securecafe.com, slug: nema, property_id: "691771"}
+  fifteen_fifty:
+    name: Fifteen Fifty
+    address: 1550 Mission St
+    stories: 39
+    source: {type: related, url: https://www.relatedrentals.com/apartment-rentals/san-francisco/mission/fifteen-fifty}
+    notes: Related has no online application link; the unit page has the tour/contact form.
+  van_ness_100:
+    name: 100 Van Ness
+    address: 100 Van Ness Ave
+    stories: 29
+    source: {type: jdfp, url: https://100vanness.com/floorplans/, base_url: https://100vanness.com/}
+    fallback: {type: sightmap, embed: dqw97o85vo9}
+    notes: RealPage online leasing is launched from the unit page ("Check Availability").
+  van_ness_150:
+    name: 150 Van Ness
+    address: 150 Van Ness Ave
+    stories: 13
+    source: {type: jdfp, url: https://150vanness.com/floorplans/, base_url: https://150vanness.com/}
+  chorus:
+    name: Chorus
+    address: 30 Otis St
+    stories: 28
+    listing_url: https://rentchorus.com/floor-plans
+    source: {type: sightmap, embed: 0n9w6r13w71}
+    fallback: {type: securecafe, host: rentchorus.securecafe.com, slug: chorus-residential, property_id: "2049276"}
+    apply_enrich: {host: rentchorus.securecafe.com, slug: chorus-residential, property_id: "2049276"}
+  trinity_1177_market:
+    name: 1177 Market at Trinity Place
+    address: 1177 Market St
+    stories: 24
+    source: {type: jdfp, url: https://1177marketapts.com/floorplans/, base_url: https://1177marketapts.com/}
+    fallback: {type: securecafe, host: sandiegoapartments.securecafe.com, slug: 1177-market-at-trinity-place-0, property_id: "1693539"}
+    apply_enrich: {host: sandiegoapartments.securecafe.com, slug: 1177-market-at-trinity-place-0, property_id: "1693539"}
+  trinity_33_8th:
+    name: 33 8th at Trinity Place
+    address: 33 8th St
+    stories: 22
+    source: {type: jdfp, url: https://33-8thapts.com/floorplans/, base_url: https://33-8thapts.com/}
+    fallback: {type: securecafe, host: 33-8thapts.securecafe.com, slug: 33-8th-at-trinity-place-0}
+    apply_enrich: {host: 33-8thapts.securecafe.com, slug: 33-8th-at-trinity-place-0}
+  trinity_1188_mission:
+    name: 1188 Mission at Trinity Place
+    address: 1188 Mission St
+    stories: 24
+    source: {type: jdfp, url: https://1188missionapts.com/floorplans/, base_url: https://1188missionapts.com/}
+    fallback: {type: securecafe, host: sandiegoapartments.securecafe.com, slug: 1188-mission-at-trinity-place-0, property_id: "1693545"}
+    apply_enrich: {host: sandiegoapartments.securecafe.com, slug: 1188-mission-at-trinity-place-0, property_id: "1693545"}
+  trinity_1190_mission:
+    name: 1190 Mission at Trinity Place
+    address: 1190 Mission St
+    stories: 22
+    source: {type: jdfp, url: https://1190missionapts.com/floorplans/, base_url: https://1190missionapts.com/}
+    fallback: {type: securecafe, host: 1190missionapts.securecafe.com, slug: 1190-mission-at-trinity-place0}
+    apply_enrich: {host: 1190missionapts.securecafe.com, slug: 1190-mission-at-trinity-place0}
+  essex_fox_plaza:
+    name: Fox Plaza
+    address: 1390 Market St
+    stories: 29
+    listing_url: https://www.essexapartmenthomes.com/apartments/san-francisco/fox-plaza/floor-plans-and-pricing
+    source: {type: sightmap, embed: nrkwng6npd2}
+    fallback: {type: securecafe, host: essexrentcafe.securecafe.com, slug: fox-plaza, property_id: "518105"}
+    apply_enrich: {host: essexrentcafe.securecafe.com, slug: fox-plaza, property_id: "518105"}
+  ava_55_ninth:
+    name: AVA 55 Ninth
+    address: 55 9th St
+    stories: 14
+    source: {type: avalon, url: https://www.avaloncommunities.com/california/san-francisco-apartments/ava-55-ninth/}
+  paramount:
+    name: The Paramount
+    address: 680 Mission St
+    stories: 43
+    source: {type: related, url: https://www.relatedrentals.com/apartment-rentals/san-francisco/soma/the-paramount}
+  spera:
+    name: Spera (formerly 33 Tehama)
+    address: 39 Tehama St
+    stories: 35
+    listing_url: https://www.sperasf.com/floor-plans/
+    source: {type: securecafe, host: sentral.securecafe.com, slug: spera, property_id: "1857892"}
+
+  # ------------------------------------------------------------ Rincon Hill / East Cut / Transbay
+  fremont_340:
+    name: 340 Fremont
+    address: 340 Fremont St
+    stories: 40
+    listing_url: https://eqr-applications.com/building/340-fremont-2/units
+    source: {type: elise, slug: 340-fremont-2}
+    fallback: {type: equity, url: https://www.equityapartments.com/san-francisco/rincon-hill/340-fremont-apartments}
+  fremont_399:
+    name: 399 Fremont
+    address: 399 Fremont St
+    stories: 42
+    source: {type: udr, url: https://www.udr.com/san-francisco-bay-area-apartments/san-francisco/399-fremont/apartments-pricing/}
+  beale_388:
+    name: 388 Beale
+    address: 388 Beale St
+    stories: 22
+    source: {type: udr, url: https://www.udr.com/san-francisco-bay-area-apartments/san-francisco/388-beale/apartments-pricing/}
+  solaire:
+    name: Solaire
+    address: 299 Fremont St
+    stories: 32
+    listing_url: https://www.greystar.com/solaire-san-francisco-ca/p_20953
+    source: {type: securecafe, host: solairesf.securecafe.com, slug: solaire1, property_id: "1959164"}
+    fallback: {type: greystar, url: https://www.greystar.com/solaire-san-francisco-ca/p_20953}
+  jasper:
+    name: Jasper
+    address: 45 Lansing St
+    stories: 40
+    listing_url: https://www.greystar.com/jasper-san-francisco-ca/p_16224
+    source: {type: securecafe, host: rentjasper.securecafe.com, slug: jasper-1, property_id: "1093372"}
+    fallback: {type: greystar, url: https://www.greystar.com/jasper-san-francisco-ca/p_16224}
+  essex_500_folsom:
+    name: 500 Folsom
+    address: 500 Folsom St
+    stories: 42
+    listing_url: https://www.essexapartmenthomes.com/apartments/san-francisco/500-folsom/floor-plans-and-pricing
+    source: {type: sightmap, embed: rx1p8j7ovd6}
+    fallback: {type: securecafe, host: essexrentcafe.securecafe.com, slug: 500-folsom, property_id: "1101165"}
+    apply_enrich: {host: essexrentcafe.securecafe.com, slug: 500-folsom, property_id: "1101165"}
+  avery_450:
+    name: Avery 450
+    address: 450 Folsom St
+    stories: 56
+    source: {type: related, url: https://www.relatedrentals.com/apartment-rentals/san-francisco/soma/avery-450}
+  towers_at_rincon:
+    name: The Towers at Rincon
+    address: 88 Howard St
+    stories: 23
+    listing_url: https://www.thetowersatrincon.com/floorplans
+    source: {type: sightmap, embed: 6m9pzjm4vk1}
+    fallback: {type: securecafe, host: thetowersatrincon.securecafe.com, slug: towers-at-rincon0, property_id: "2371368"}
+    apply_enrich: {host: thetowersatrincon.securecafe.com, slug: towers-at-rincon0, property_id: "2371368"}
+
+  # ------------------------------------------------------------ Mission Bay
+  mission_rock:
+    name: Mission Rock
+    address: The Canyon (1 Mission Rock) & Verde (1070 Bridgeview Way)
+    stories: 23
+    listing_url: https://missionrockresidences.com/availability/
+    sub_buildings: {Canyon: "The Canyon at Mission Rock", Verde: "Verde at Mission Rock"}
+    source: {type: sightmap, embed: jlw0nylrp2y}
+    fallback: {type: securecafe, host: missionrockresidences.securecafe.com, slug: mission-rock, property_id: "2347589"}
+    apply_enrich: {host: missionrockresidences.securecafe.com, slug: mission-rock, property_id: "2347589"}
+  azure:
+    name: Azure
+    address: 690 Long Bridge St
+    stories: 16
+    listing_url: https://eqr-applications.com/building/azure-3/units
+    source: {type: elise, slug: azure-3}
+    fallback: {type: equity, url: https://www.equityapartments.com/san-francisco-bay/mission-bay/azure-apartments}
+  channel_mission_bay:
+    name: Channel Mission Bay
+    address: 185 Channel St
+    stories: 16
+    source: {type: udr, url: https://www.udr.com/san-francisco-bay-area-apartments/san-francisco/channel-mission-bay/apartments-pricing/}
+
+  # ------------------------------------------------------------ Nob Hill / Tenderloin / North Beach / Embarcadero
+  etta:
+    name: Etta
+    address: 1285 Sutter St
+    stories: 13
+    source: {type: jdfp, url: https://ettasf.com/floorplans/, base_url: https://ettasf.com/}
+    fallback: {type: securecafe, host: ettasf.securecafe.com, slug: etta, property_id: "511403"}
+    apply_enrich: {host: ettasf.securecafe.com, slug: etta, property_id: "511403"}
+  geary_courtyard:
+    name: Geary Courtyard
+    address: 639 Geary St
+    stories: 12
+    listing_url: https://www.gearycourtyardapts.com/floorplans
+    source: {type: securecafe, host: gearycourtyardapts.securecafe.com, slug: geary-courtyard-apts, property_id: "1804846"}
+  crystal_tower:
+    name: Crystal Tower
+    address: 2140 Taylor St
+    stories: 15
+    listing_url: https://www.2140taylorapts.com/floorplans
+    source: {type: sightmap, embed: zlpor129pg4}
+    fallback: {type: securecafe, host: 2140taylorapts.securecafe.com, slug: crystal-tower-apartments-0, property_id: "1693821"}
+    apply_enrich: {host: 2140taylorapts.securecafe.com, slug: crystal-tower-apartments-0, property_id: "1693821"}
+  gateway:
+    name: The Gateway
+    address: 460 Davis Ct
+    stories: 25
+    listing_url: https://www.thegateway.com/
+    apply_url: https://9246347.onlineleasing.realpage.com/
+    source: {type: sightmap, embed: dqw9dkdgvo9}
+
+  # ------------------------------------------------------------ Mid-rise / other
+  venn_on_market:
+    name: Venn on Market
+    address: 1844 Market St
+    stories: 8
+    enabled: true
+    source: {type: jdfp, url: https://vennonmarket.com/floorplans/, base_url: https://vennonmarket.com/}
+    fallback: {type: securecafe, host: vennonmarket.securecafe.com, slug: venn-on-market0, property_id: "1881899"}
+    apply_enrich: {host: vennonmarket.securecafe.com, slug: venn-on-market0, property_id: "1881899"}
+  trinity_towers:
+    name: Trinity Towers
+    address: 888 O'Farrell St
+    stories: 10
+    enabled: true
+    listing_url: https://www.888ofarrellapts.com/floorplans
+    source: {type: sightmap, embed: yzvg8o57pln}
+    fallback: {type: securecafe, host: 888ofarrellapts.securecafe.com, slug: trinity-towers-apartments-0, property_id: "1694043"}
+    apply_enrich: {host: 888ofarrellapts.securecafe.com, slug: trinity-towers-apartments-0, property_id: "1694043"}
+  one_henry_adams:
+    name: One Henry Adams
+    address: 1 Henry Adams St
+    stories: 6
+    enabled: true
+    listing_url: https://eqr-applications.com/building/one-henry-adams/units
+    source: {type: elise, slug: one-henry-adams}
+    fallback: {type: equity, url: https://www.equityapartments.com/san-francisco/design-district/one-henry-adams-apartments}
+  potrero_1010:
+    name: Potrero 1010
+    address: 1010 16th St
+    stories: 7
+    enabled: true
+    listing_url: https://eqr-applications.com/building/potrero-1010-3/units
+    source: {type: elise, slug: potrero-1010-3}
+    fallback: {type: equity, url: https://www.equityapartments.com/san-francisco/potrero-hill/potrero-1010-apartments}
+  soma_square:
+    name: SoMa Square
+    address: 1 Saint Francis Pl
+    stories: 5
+    enabled: true
+    listing_url: https://eqr-applications.com/building/soma-square/units
+    source: {type: elise, slug: soma-square}
+    fallback: {type: equity, url: https://www.equityapartments.com/san-francisco-bay/soma/soma-square-apartments}
+  brannan_855:
+    name: 855 Brannan
+    address: 855 Brannan St
+    stories: 6
+    listing_url: https://eqr-applications.com/building/855-brannan-2/units
+    source: {type: elise, slug: 855-brannan-2}
+    fallback: {type: equity, url: https://www.equityapartments.com/san-francisco/soma/855-brannan-apartments}
+  bluxome_77:
+    name: 77 Bluxome
+    address: 77 Bluxome St
+    stories: 7
+    listing_url: https://eqr-applications.com/building/77-bluxome-4/units
+    source: {type: elise, slug: 77-bluxome-4}
+    fallback: {type: equity, url: https://www.equityapartments.com/san-francisco-bay/soma/77-bluxome-apartments}
+    notes: Micro-studios only today; tracked so any larger unit is caught.
+  avalon_hayes_valley:
+    name: Avalon Hayes Valley
+    address: 55 Page St
+    stories: 8
+    enabled: true
+    source: {type: avalon, url: https://www.avaloncommunities.com/california/san-francisco-apartments/avalon-hayes-valley/}
+  avalon_mission_bay:
+    name: Avalon at Mission Bay
+    address: 255 King St
+    stories: 8
+    enabled: true
+    source: {type: avalon, url: https://www.avaloncommunities.com/california/san-francisco-apartments/avalon-at-mission-bay/}
+  mb360:
+    name: MB360
+    address: 1200 4th St
+    stories: 7
+    enabled: true
+    listing_url: https://www.essexapartmenthomes.com/apartments/san-francisco/mb360/floor-plans-and-pricing
+    source: {type: sightmap, embed: rx1p8102vd6}
+    fallback: {type: securecafe, host: essexrentcafe.securecafe.com, slug: mb360, property_id: "513956"}
+    apply_enrich: {host: essexrentcafe.securecafe.com, slug: mb360, property_id: "513956"}
+    notes: Now managed by Essex (no longer on udr.com).
+  essex_mosso:
+    name: Mosso
+    address: 900 Folsom St
+    stories: 9
+    enabled: true
+    listing_url: https://www.essexapartmenthomes.com/apartments/san-francisco/mosso/floor-plans-and-pricing
+    source: {type: securecafe, host: essexrentcafe.securecafe.com, slug: mosso-0, property_id: "1782282"}
+
+  # ------------------------------------------------------------ Large homes (4-7 BR): Presidio Trust historic houses & duplexes
+  presidio:
+    name: Presidio Residences
+    address: 21 neighborhoods inside the Presidio (leasing office 222 Halleck St)
+    stories: 3
+    building_type: low-rise   # historic houses/duplexes; the label below reads "Low-rise (3 floors)"
+    interval: 90
+    listing_url: https://www.presidio-residences.com/
+    apply_url: https://presidio-residences.securecafe.com/onlineleasing/presidio-trust/guestlogin.aspx
+    source:
+      type: rentcafe_site
+      concurrency: 3
+      urls:
+        - https://www.presidio-residences.com/apartments/ca/san-francisco/baker-beach-neighborhood/floorplans
+        - https://www.presidio-residences.com/apartments/ca/san-francisco/east-washington-neighborhood/floorplans
+        - https://www.presidio-residences.com/apartments/ca/san-francisco/funston-neighborhood/floorplans
+        - https://www.presidio-residences.com/apartments/ca/san-francisco/infantry-terrace-neighborhood/floorplans
+        - https://www.presidio-residences.com/apartments/ca/san-francisco/kobbe-avenue-neighborhood/floorplans
+        - https://www.presidio-residences.com/apartments/ca/san-francisco/liggett-avenue-neighborhood/floorplans
+        - https://www.presidio-residences.com/apartments/ca/san-francisco/macarthur-neighborhood/floorplans
+        - https://www.presidio-residences.com/apartments/ca/san-francisco/north-fort-scott-neighborhood/floorplans
+        - https://www.presidio-residences.com/apartments/ca/san-francisco/pilots-row-neighborhood/floorplans
+        - https://www.presidio-residences.com/apartments/ca/san-francisco/portola-neighborhood/floorplans
+        - https://www.presidio-residences.com/apartments/ca/san-francisco/quarry-neighborhood/floorplans
+        - https://www.presidio-residences.com/apartments/ca/san-francisco/riley-avenue-neighborhood/floorplans
+        - https://www.presidio-residences.com/apartments/ca/san-francisco/ruckman-avenue-neighborhood/floorplans
+        - https://www.presidio-residences.com/apartments/ca/san-francisco/sanches-neighborhood/floorplans
+        - https://www.presidio-residences.com/apartments/ca/san-francisco/simonds-loop-neighborhood/floorplans
+        - https://www.presidio-residences.com/apartments/ca/san-francisco/south-baker-beach-neighborhood/floorplans
+        - https://www.presidio-residences.com/apartments/ca/san-francisco/storey-avenue-neighborhood/floorplans
+        - https://www.presidio-residences.com/apartments/ca/san-francisco/upper-portola-east-neighborhood/floorplans
+        - https://www.presidio-residences.com/apartments/ca/san-francisco/upper-portola-west-neighborhood/floorplans
+        - https://www.presidio-residences.com/apartments/ca/san-francisco/west-washington-neighborhood/floorplans
+        - https://www.presidio-residences.com/apartments/ca/san-francisco/wyman-avenue-neighborhood/floorplans
+    notes: >-
+      Historic Army housing run by the Presidio Trust: 1-7 BR homes (Simonds Loop 4-5 BR duplexes,
+      Infantry Terrace 4-7 BR houses, Wyman/Pilots Row 5 BR SFHs, Baker Beach 2-4 BR apartments).
+      Availability is published per neighborhood floor plan; each alert carries the neighborhood name.
+
+  # ------------------------------------------------------------ Added 2026-09-15 after coverage research (5+ floors, official feeds)
+  quincy:
+    name: Quincy
+    address: 555 Bryant St
+    stories: 16
+    listing_url: https://www.quincysf.com/
+    source: {type: securecafe, host: quincysf.securecafe.com, slug: quincy2, property_id: "1959105"}
+  gough_1333:
+    name: 1333 Gough at Cathedral Hill
+    address: 1333 Gough St
+    stories: 14
+    source: {type: jdfp, url: https://1333gough.com/floorplans/, base_url: https://1333gough.com/}
+    fallback: {type: sightmap, embed: yjp24qkrvxl}
+    apply_enrich: {host: 1333gough.securecafe.com, slug: cathedral-hill-plaza, property_id: "1366033"}
+  chestnut_1000:
+    name: 1000 Chestnut
+    address: 1000 Chestnut St
+    stories: 14
+    listing_url: https://www.1000chestnutapts.com/
+    source: {type: securecafe, host: 1000chestnutapts.securecafe.com, slug: 1000-chestnut-street-apartments-0, property_id: "1694042"}
+  nob_hill_tower:
+    name: Nob Hill Tower
+    address: 1221 Jones St
+    stories: 13
+    listing_url: https://www.greystar.com/nob-hill-tower-san-francisco-ca/p_17838
+    source: {type: securecafe, host: liveatnobhilltower.securecafe.com, slug: nob-hill-tower}
+    fallback: {type: greystar, url: https://www.greystar.com/nob-hill-tower-san-francisco-ca/p_17838}
+  broadway_2000:
+    name: 2000 Broadway
+    address: 2000 Broadway
+    stories: 13
+    listing_url: https://www.2000broadwayapts.com/
+    source: {type: securecafe, host: 2000broadwayapts.securecafe.com, slug: 2000-broadway-street-apartments-0, property_id: "1693546"}
+    notes: Terraced building, 11-13 floors depending on source.
+  argenta:
+    name: Argenta
+    address: 1 Polk St
+    stories: 21
+    listing_url: https://www.greystar.com/argenta-apartments-san-francisco-ca/p_14992
+    source: {type: greystar, url: https://www.greystar.com/argenta-apartments-san-francisco-ca/p_14992}
+  clay_park_tower:
+    name: Clay Park Tower
+    address: 1890 Clay St
+    stories: 10
+    listing_url: https://www.1890clayapts.com/
+    source: {type: securecafe, host: 1890clayapts.securecafe.com, slug: clay-park-tower-apartments-0, property_id: "1693548"}
+  california_1700:
+    name: 1700 California
+    address: 1700 California St
+    stories: 10
+    listing_url: https://www.1700californiastreet.com/floorplans
+    source: {type: securecafe, host: 1700californiastreet.securecafe.com, slug: 1700-california-street}
+    fallback: {type: greystar, url: https://www.greystar.com/1700-california-apartments-san-francisco-ca/p_21949}
+  brady:
+    name: The Brady
+    address: 1 Brady St
+    stories: 8
+    source: {type: jdfp, url: https://thebradysf.com/floorplans/, base_url: https://thebradysf.com/}
+    fallback: {type: sightmap, embed: jlw0nexgp2y}
+  dolores_38:
+    name: 38 Dolores
+    address: 38 Dolores St
+    stories: 8
+    listing_url: https://38doloressf.com/
+    source: {type: securecafe, host: 38doloressf.securecafe.com, slug: 38-dolores, property_id: "1282239"}
+  soma_788:
+    name: SOMA at 788
+    address: 788 Harrison St
+    stories: 8
+    source: {type: jdfp, url: https://somaat788.com/floorplans/, base_url: https://somaat788.com/}
+    fallback: {type: sightmap, embed: dzlpoy7jwg4}
+  the_landing:
+    name: The Landing
+    address: 1395 22nd St
+    stories: 8
+    listing_url: https://www.thelandingsf.com/
+    source: {type: securecafe, host: thelandingsf.securecafe.com, slug: the-landing-8, property_id: "1861750"}
+    notes: Several buildings of 4-8 floors.
+  l_seven:
+    name: L Seven
+    address: 1222 Harrison St
+    stories: 7
+    listing_url: https://www.lsevensf.com/
+    source: {type: securecafe, host: lsevensf.securecafe.com, slug: l-seven0, property_id: "1844999"}
+  alchemy:
+    name: Alchemy
+    address: 200 Buchanan St
+    stories: 7
+    listing_url: https://www.alchemysf.com/
+    source: {type: securecafe, host: alchemysf.securecafe.com, slug: alchemy0, property_id: "2065243"}
+  alta_potrero:
+    name: Alta Potrero
+    address: 1301 16th St
+    stories: 6
+    listing_url: https://www.altapotrero.com/
+    source: {type: securecafe, host: altapotrero.securecafe.com, slug: alta-potrero1, property_id: "2525435"}
+  duboce:
+    name: The Duboce
+    address: 181 Sanchez St
+    stories: 6
+    source: {type: jdfp, url: https://duboce.com/floorplans/, base_url: https://duboce.com/}
+    notes: No SightMap fallback on purpose; that map lists all 87 units, not just vacancies.
+  vara:
+    name: Vara
+    address: 1600 15th St
+    stories: 6
+    listing_url: https://www.vara-sf.com/san-francisco/vara/conventional/
+    source: {type: sightmap, embed: l8epmem6w6d}
+  edgewater:
+    name: Edgewater
+    address: 355 Berry St
+    stories: 6
+    source: {type: udr, url: https://www.udr.com/san-francisco-bay-area-apartments/san-francisco/edgewater/apartments-pricing/}
+  post_2000:
+    name: 2000 Post
+    address: 1777 Steiner St
+    stories: 5
+    source: {type: udr, url: https://www.udr.com/san-francisco-bay-area-apartments/san-francisco/2000-post/apartments-pricing/}
+  strata:
+    name: Strata at Mission Bay
+    address: 1201 4th St
+    stories: 5
+    listing_url: https://www.stratasf.com/availableunits
+    source: {type: securecafe, host: stratasf.securecafe.com, slug: strata-at-mission-bay, property_id: "471422"}
+  avalon_dogpatch:
+    name: Avalon Dogpatch
+    address: 800 Indiana St
+    stories: 5
+    source: {type: avalon, url: https://www.avaloncommunities.com/california/san-francisco-apartments/avalon-dogpatch/}
+  tenn_777:
+    name: 777 Tenn
+    address: 777 Tennessee St
+    stories: 5
+    listing_url: https://www.live777tenn.com/
+    source: {type: securecafe, host: live777tenn.securecafe.com, slug: 777-tenn-0, property_id: "1547541"}
+  marina_cove:
+    name: Marina Cove
+    address: 1550 Bay St
+    stories: 5
+    listing_url: https://www.1550bayapts.com/
+    source: {type: securecafe, host: 1550bayapts.securecafe.com, slug: marina-cove-apartments-0, property_id: "1693543"}
+  avalon_ocean_avenue:
+    name: Avalon Ocean Avenue
+    address: 1150 Ocean Ave
+    building_type: mid-rise   # AvalonBay describes it as two mid-rise buildings; floor counts vary by source (4-6)
+    source: {type: avalon, url: https://www.avaloncommunities.com/california/san-francisco-apartments/avalon-ocean-avenue/}
+  mission_bay_windsor:
+    name: Mission Bay by Windsor
+    address: 360 Berry St
+    stories: 5
+    listing_url: https://www.windsorcommunities.com/properties/mission-bay-by-windsor/floorplans/
+    apply_url: https://apply.funnelleasing.com/1538
+    source: {type: sightmap, embed: d7p1qll2wkx}
+  windsor_dogpatch:
+    name: Windsor at Dogpatch
+    address: 2660 3rd St
+    stories: 6
+    listing_url: https://www.windsorcommunities.com/properties/windsor-at-dogpatch/floorplans/
+    apply_url: https://apply.funnelleasing.com/1531
+    source: {type: sightmap, embed: 60p7xg4lv7n}
+  hanover_soma_west:
+    name: Hanover Soma West
+    address: 1140 Harrison St
+    stories: 7
+    listing_url: https://www.hanoversomawest.com/san-francisco/hanover-soma-west/conventional/
+    source: {type: entrata, url: https://www.hanoversomawest.com/san-francisco/hanover-soma-west/conventional/}
